@@ -33,6 +33,8 @@
         <h2 class="fishing-page__panel-title">Locations</h2>
         <p class="fishing-page__panel-copy">Choose the next water to fish.</p>
         <LocationSelector
+          :boosted-casts-remaining="boostedCastsRemaining"
+          :boosted-location-id="boostedLocationId"
           :disabled="!canCast"
           :locations="locations"
           :selected-location-id="selectedLocationId"
@@ -76,6 +78,18 @@
           <div class="fishing-page__status-row">
             <dt>Barrier</dt>
             <dd>{{ isBarrierBlocking ? 'blocked' : 'clear' }}</dd>
+          </div>
+          <div class="fishing-page__status-row">
+            <dt>Rod</dt>
+            <dd>{{ equippedRodName }}</dd>
+          </div>
+          <div class="fishing-page__status-row">
+            <dt>Line</dt>
+            <dd>{{ equippedLineName }}</dd>
+          </div>
+          <div class="fishing-page__status-row">
+            <dt>Bait</dt>
+            <dd>{{ equippedBaitName }}</dd>
           </div>
         </dl>
         <section
@@ -193,6 +207,31 @@
           </article>
         </section>
       </section>
+
+      <BaseButton
+        class="fishing-page__inventory-launcher"
+        :disabled="!canOpenInventoryOverlay"
+        @click="() => openInventoryOverlay()"
+      >
+        Inventory
+      </BaseButton>
+
+      <InventoryStoreOverlay
+        :active-tab="inventoryOverlayTab"
+        :inventory-fish="inventoryFish"
+        :inventory-gear-items="inventoryGearItems"
+        :is-open="isInventoryOverlayOpen"
+        :money="money"
+        :mode="inventoryOverlayMode"
+        :store-gear-items="storeGearItems"
+        @buy-item="(item) => onInventoryBuyItem(item)"
+        @close="() => closeInventoryOverlay()"
+        @equip-item="(item) => onInventoryEquipItem(item)"
+        @mode-change="(mode) => setInventoryOverlayMode(mode)"
+        @sell-all-fish="() => onInventorySellAllFish()"
+        @sell-item="(item) => onInventorySellItem(item)"
+        @tab-change="(tabId) => setInventoryOverlayTab(tabId)"
+      />
     </main>
   </section>
 </template>
@@ -201,8 +240,10 @@
 import BaseButton from '@/components/ui/BaseButton.vue'
 import CollapsibleSidebar from '@/components/ui/CollapsibleSidebar.vue'
 import FishingScene from '@/components/fishing/FishingScene.vue'
+import InventoryStoreOverlay from '@/components/ui/InventoryStoreOverlay.vue'
 import LocationSelector from '@/components/fishing/LocationSelector.vue'
 import { defineConfig } from '@/utils/defineConfig'
+import { mapGetters } from 'vuex'
 
 const DEFAULT_PAGE_TITLE = 'Fishing Game'
 const HOOKED_BOBBER_Y = 92
@@ -219,6 +260,7 @@ export default {
     BaseButton,
     CollapsibleSidebar,
     FishingScene,
+    InventoryStoreOverlay,
     LocationSelector,
   },
   data() {
@@ -227,14 +269,59 @@ export default {
       lastAppliedPhase: null,
       isLocationPanelCollapsed: false,
       isStatusPanelCollapsed: false,
+      isInventoryOverlayOpen: false,
+      inventoryOverlayMode: 'inventory',
+      inventoryOverlayTab: 'fish',
     }
   },
   computed: {
-    locations() {
-      return this.$store.getters['content/getLocations']
+    ...mapGetters('content', {
+      locations: 'getLocations',
+      configWarnings: 'getConfigWarnings',
+      gearDefinitions: 'getGearDefinitions',
+      getLocationWarnings: 'getLocationWarnings',
+      getLocationById: 'getLocationById',
+    }),
+    ...mapGetters('progress', {
+      money: 'getMoney',
+      inventoryFish: 'getInventoryFish',
+      boostedLocationId: 'getBoostedLocationId',
+      boostedCastsRemaining: 'getBoostedCastsRemaining',
+      inventoryRods: 'getInventoryRods',
+      inventoryLines: 'getInventoryLines',
+      inventoryBait: 'getInventoryBait',
+      currentRodId: 'getCurrentRodId',
+      currentLineId: 'getCurrentLineId',
+      currentBaitId: 'getCurrentBaitId',
+      selectedLocationId: 'getSelectedLocationId',
+    }),
+    ...mapGetters('gameSession', {
+      phase: 'getPhase',
+      castAnchor: 'getCastAnchor',
+      castStartedAt: 'getCastStartedAt',
+      encounter: 'getEncounter',
+      result: 'getResult',
+      minigameState: 'getMinigameState',
+      activeBarrier: 'getActiveBarrier',
+      barrierRemainingClicks: 'getBarrierRemainingClicks',
+      isBarrierBlocking: 'getIsBarrierBlocking',
+    }),
+    ...mapGetters('ui', {
+      resultPanel: 'getResultPanel',
+    }),
+    inventoryGearItems() {
+      return {
+        rods: this.buildInventoryGearRows('rods'),
+        lines: this.buildInventoryGearRows('lines'),
+        bait: this.buildInventoryGearRows('bait'),
+      }
     },
-    configWarnings() {
-      return this.$store.getters['content/getConfigWarnings']
+    storeGearItems() {
+      return {
+        rods: this.buildStoreGearRows('rods'),
+        lines: this.buildStoreGearRows('lines'),
+        bait: this.buildStoreGearRows('bait'),
+      }
     },
     selectedLocationWarnings() {
       const locationId =
@@ -244,15 +331,12 @@ export default {
         return []
       }
 
-      return this.$store.getters['content/getLocationWarnings'](locationId)
+      return this.getLocationWarnings(locationId)
     },
     sceneWarnings() {
       return [
         ...new Set([...this.configWarnings, ...this.selectedLocationWarnings]),
       ]
-    },
-    phase() {
-      return this.$store.getters['gameSession/getPhase']
     },
     phaseMessage() {
       if (this.phase === 'waitingBite') {
@@ -272,8 +356,8 @@ export default {
     canCast() {
       return this.phase === 'idle' || this.phase === 'result'
     },
-    castAnchor() {
-      return this.$store.getters['gameSession/getCastAnchor']
+    canOpenInventoryOverlay() {
+      return this.phase === 'idle' || this.phase === 'result'
     },
     sceneBobber() {
       if (!this.selectedLocation) {
@@ -325,24 +409,12 @@ export default {
         isVisible: false,
       }
     },
-    castStartedAt() {
-      return this.$store.getters['gameSession/getCastStartedAt']
-    },
     castStartedAtLabel() {
       if (!this.castStartedAt) {
         return 'n/a'
       }
 
       return new Date(this.castStartedAt).toLocaleTimeString()
-    },
-    encounter() {
-      return this.$store.getters['gameSession/getEncounter']
-    },
-    result() {
-      return this.$store.getters['gameSession/getResult']
-    },
-    resultPanel() {
-      return this.$store.getters['ui/getResultPanel']
     },
     resultEncounter() {
       return this.result?.encounter || null
@@ -400,35 +472,27 @@ export default {
 
       return `${this.encounter.fishName} (tier ${this.encounter.tier}, diff ${this.encounter.difficultyScore})`
     },
-    selectedLocationId() {
-      return this.$store.getters['progress/getSelectedLocationId']
-    },
     selectedLocation() {
       if (!this.selectedLocationId) {
         return this.locations[0] || null
       }
 
-      return this.$store.getters['content/getLocationById'](
-        this.selectedLocationId,
-      )
+      return this.getLocationById(this.selectedLocationId)
     },
     selectedLocationName() {
       return this.selectedLocation?.name || 'none'
     },
-    minigameState() {
-      return this.$store.getters['gameSession/getMinigameState']
+    equippedRodName() {
+      return this.resolveGearName('rods', this.currentRodId)
+    },
+    equippedLineName() {
+      return this.resolveGearName('lines', this.currentLineId)
+    },
+    equippedBaitName() {
+      return this.resolveGearName('bait', this.currentBaitId)
     },
     minigameBarriers() {
       return this.minigameState.config?.barriers || []
-    },
-    activeBarrier() {
-      return this.$store.getters['gameSession/getActiveBarrier']
-    },
-    barrierRemainingClicks() {
-      return this.$store.getters['gameSession/getBarrierRemainingClicks']
-    },
-    isBarrierBlocking() {
-      return this.$store.getters['gameSession/getIsBarrierBlocking']
     },
     isReeling() {
       return Boolean(this.minigameState.isReeling)
@@ -487,7 +551,7 @@ export default {
         return
       }
 
-      const nextPhase = this.$store.getters['gameSession/getPhase']
+      const nextPhase = this.phase
       if (nextPhase === this.lastAppliedPhase) {
         return
       }
@@ -516,16 +580,158 @@ export default {
 
       this.isStatusPanelCollapsed = !this.isStatusPanelCollapsed
     },
+    openInventoryOverlay() {
+      if (!this.canOpenInventoryOverlay) {
+        return
+      }
+
+      this.inventoryOverlayMode = 'inventory'
+      this.inventoryOverlayTab = 'fish'
+      this.isInventoryOverlayOpen = true
+    },
+    closeInventoryOverlay() {
+      this.isInventoryOverlayOpen = false
+    },
+    setInventoryOverlayMode(mode) {
+      this.inventoryOverlayMode = mode
+
+      if (mode === 'store' && this.inventoryOverlayTab === 'fish') {
+        this.inventoryOverlayTab = 'rods'
+      }
+    },
+    setInventoryOverlayTab(tabId) {
+      this.inventoryOverlayTab = tabId
+    },
+    onInventorySellItem(item) {
+      if (!item?.id) {
+        return
+      }
+
+      this.$store.dispatch('progress/sellFishByInstanceId', item.id) // Promise-returning action; UI does not depend on completion
+    },
+    onInventorySellAllFish() {
+      this.$store.dispatch('progress/sellAllFish') // Promise-returning action; UI updates from store reactivity
+    },
+    onInventoryBuyItem(item) {
+      if (!item?.id || !item?.slot) {
+        return
+      }
+
+      this.$store.dispatch('progress/buyGearItem', {
+        slot: item.slot,
+        itemId: item.id,
+      }) // Promise-returning action; UI updates from store reactivity
+    },
+    onInventoryEquipItem(item) {
+      if (!item?.id || !item?.slot) {
+        return
+      }
+
+      this.$store.dispatch('progress/equipGearItem', {
+        slot: item.slot,
+        itemId: item.id,
+      }) // Promise-returning action; UI updates from store reactivity
+    },
+    resolveGearName(slot, gearId) {
+      const items = this.gearDefinitions?.[slot]
+      if (!Array.isArray(items)) {
+        return 'n/a'
+      }
+
+      const found = items.find((item) => item.id === gearId)
+      return found?.name || 'n/a'
+    },
+    getOwnedCount(slot, gearItem) {
+      if (gearItem.isUnlimited) {
+        return Number.POSITIVE_INFINITY
+      }
+
+      if (slot === 'rods') {
+        return Number(this.inventoryRods?.[gearItem.id] || 0)
+      }
+
+      if (slot === 'lines') {
+        return Number(this.inventoryLines?.[gearItem.id] || 0)
+      }
+
+      return Number(this.inventoryBait?.[gearItem.id] || 0)
+    },
+    getEquippedId(slot) {
+      if (slot === 'rods') {
+        return this.currentRodId
+      }
+
+      if (slot === 'lines') {
+        return this.currentLineId
+      }
+
+      return this.currentBaitId
+    },
+    resolveGearImageSrc(slot, itemId) {
+      if (slot !== 'rods') {
+        return null
+      }
+
+      const rodImageById = {
+        spinning: '/images/rods/rod-spinning.png',
+        fly: '/images/rods/rod-flywheel.png',
+        baitcast: '/images/rods/rod-baitcast.png',
+      }
+
+      return rodImageById[itemId] || null
+    },
+    buildInventoryGearRows(slot) {
+      const items = this.gearDefinitions?.[slot]
+      if (!Array.isArray(items)) {
+        return []
+      }
+
+      const equippedId = this.getEquippedId(slot)
+
+      return items.map((item) => {
+        const ownedCount = this.getOwnedCount(slot, item)
+        const isEquipped = item.id === equippedId
+        return {
+          id: item.id,
+          slot,
+          name: item.name,
+          meta: item.isDefault ? 'Default loadout' : 'Purchased gear',
+          ownedLabel: item.isUnlimited ? '∞' : String(ownedCount),
+          isEquipped,
+          canEquip: item.isUnlimited || ownedCount > 0,
+          price: Number(item.price || 0),
+          imageSrc: this.resolveGearImageSrc(slot, item.id),
+        }
+      })
+    },
+    buildStoreGearRows(slot) {
+      const items = this.gearDefinitions?.[slot]
+      if (!Array.isArray(items)) {
+        return []
+      }
+
+      return items
+        .filter((item) => !item.isDefault && !item.isUnlimited)
+        .map((item) => ({
+          id: item.id,
+          slot,
+          name: item.name,
+          meta: 'Store item',
+          price: Number(item.price || 0),
+          canBuy: this.money >= Number(item.price || 0),
+          imageSrc: this.resolveGearImageSrc(slot, item.id),
+        }))
+    },
     applyPageTitle(phase) {
       document.title = this.resolvePageTitle(phase)
     },
     selectLocation(locationId) {
-      this.$store.dispatch('progress/selectLocation', locationId) // async chain; UI does not depend on completion
+      this.$store.dispatch('progress/selectLocation', locationId) // Promise-returning action; no immediate UI dependency
     },
     startCast(castAnchor = null) {
       this.$store.dispatch('gameSession/startCast', {
         castAnchor,
-      })
+      }) // synchronous action body; schedules timeout/RAF flow internally
     },
     onSceneCast(castAnchor) {
       if (!this.canCast) {
@@ -559,7 +765,7 @@ export default {
           return
         }
 
-        this.$store.dispatch('gameSession/setReeling', true) // synchronous state toggle
+        this.$store.dispatch('gameSession/setReeling', true) // synchronous action body; immediate state toggle
         return
       }
 
@@ -576,7 +782,7 @@ export default {
       }
 
       event.preventDefault()
-      this.$store.dispatch('gameSession/registerBarrierClick') // synchronous click handler
+      this.$store.dispatch('gameSession/registerBarrierClick') // synchronous action body; immediate click handling
     },
     onWindowKeyUp(event) {
       if (this.isEditableTarget(event.target)) {
@@ -592,7 +798,7 @@ export default {
       }
 
       event.preventDefault()
-      this.$store.dispatch('gameSession/setReeling', false) // synchronous state toggle
+      this.$store.dispatch('gameSession/setReeling', false) // synchronous action body; immediate state toggle
     },
     onReelingStart() {
       if (this.phase !== 'minigame') {
@@ -600,21 +806,21 @@ export default {
       }
 
       if (this.isBarrierBlocking) {
-        this.$store.dispatch('gameSession/registerBarrierClick')
+        this.$store.dispatch('gameSession/registerBarrierClick') // synchronous action body; immediate click handling
         return
       }
 
-      this.$store.dispatch('gameSession/setReeling', true)
+      this.$store.dispatch('gameSession/setReeling', true) // synchronous action body; immediate state toggle
     },
     onReelingStop() {
       if (this.phase !== 'minigame') {
         return
       }
 
-      this.$store.dispatch('gameSession/setReeling', false)
+      this.$store.dispatch('gameSession/setReeling', false) // synchronous action body; immediate state toggle
     },
     closeResultPanel() {
-      this.$store.dispatch('ui/hideResultPanel') // synchronous UI action
+      this.$store.dispatch('ui/hideResultPanel') // synchronous action body; immediate UI reset
     },
   },
 }
@@ -814,6 +1020,13 @@ export default {
     z-index: 3;
   }
 
+  &__inventory-launcher {
+    bottom: 16px;
+    position: fixed;
+    right: 16px;
+    z-index: 25;
+  }
+
   &__tray-primary {
     align-items: start;
     display: flex;
@@ -997,6 +1210,11 @@ export default {
       top: auto;
       transform: none;
       width: 100%;
+    }
+
+    &__inventory-launcher {
+      bottom: 12px;
+      right: 12px;
     }
   }
 }
