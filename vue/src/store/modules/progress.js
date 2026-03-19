@@ -11,6 +11,7 @@ const MUTATIONS = {
   SET_CURRENT_ROD_ID: 'SET_CURRENT_ROD_ID',
   SET_CURRENT_LINE_ID: 'SET_CURRENT_LINE_ID',
   SET_CURRENT_BAIT_ID: 'SET_CURRENT_BAIT_ID',
+  SET_CURRENT_LANDING_NET_ID: 'SET_CURRENT_LANDING_NET_ID',
   SET_MONEY: 'SET_MONEY',
   ADD_MONEY: 'ADD_MONEY',
   SPEND_MONEY: 'SPEND_MONEY',
@@ -22,12 +23,15 @@ const MUTATIONS = {
   REMOVE_INVENTORY_FISH: 'REMOVE_INVENTORY_FISH',
   CLEAR_INVENTORY_FISH: 'CLEAR_INVENTORY_FISH',
   SET_GEAR_INVENTORY_COUNT: 'SET_GEAR_INVENTORY_COUNT',
+  SET_GROUNDBAIT_INVENTORY_COUNT: 'SET_GROUNDBAIT_INVENTORY_COUNT',
+  SET_LANDING_NET_INVENTORY_COUNT: 'SET_LANDING_NET_INVENTORY_COUNT',
   SET_BOOSTED_LOCATION_ID: 'SET_BOOSTED_LOCATION_ID',
   SET_BOOSTED_CASTS_REMAINING: 'SET_BOOSTED_CASTS_REMAINING',
 }
 const DEFAULT_ROD_ID = 'spinning'
 const DEFAULT_LINE_ID = 'monofilament'
 const DEFAULT_BAIT_ID = 'worm'
+const DEFAULT_LANDING_NET_ID = null
 const QUALITY_FACTOR_DIVISOR = 125
 const SIZE_FACTOR_DIVISOR = 10
 const FISH_SELL_PRICE_MULTIPLIER = 2
@@ -75,11 +79,19 @@ const getDefaultGearIdBySlot = (slot) => {
 
 const getGearDefinition = (rootGetters, slot, id) =>
   rootGetters['content/getGearBySlotAndId'](slot, id)
+const getGroundbaitDefinition = (rootGetters, id) =>
+  rootGetters['content/getGroundbaitById'](id)
+const getLandingNetDefinition = (rootGetters, id) =>
+  rootGetters['content/getLandingNetById'](id)
 
 const getOwnedCount = (state, slot, id) => {
   const inventoryKey = getGearInventoryKey(slot)
   return Number(state[inventoryKey]?.[id] || 0)
 }
+const getOwnedGroundbaitCount = (state, id) =>
+  Number(state.inventoryGroundbait?.[id] || 0)
+const getOwnedLandingNetCount = (state, id) =>
+  Number(state.inventoryLandingNets?.[id] || 0)
 
 const getRandomIntInRange = (min, max, rng = Math.random) =>
   Math.floor(rng() * (max - min + 1)) + min
@@ -133,12 +145,15 @@ const buildInitialState = () => ({
   currentRodId: DEFAULT_ROD_ID,
   currentLineId: DEFAULT_LINE_ID,
   currentBaitId: DEFAULT_BAIT_ID,
+  currentLandingNetId: DEFAULT_LANDING_NET_ID,
   money: 0,
   catchLog: [],
   inventoryFish: [],
   inventoryRods: {},
   inventoryLines: {},
   inventoryBait: {},
+  inventoryGroundbait: {},
+  inventoryLandingNets: {},
   boostedLocationId: null,
   boostedCastsRemaining: 0,
   stats: {
@@ -149,11 +164,12 @@ const buildInitialState = () => ({
 })
 
 const buildSaveState = (state) => ({
-  version: 3,
+  version: 5,
   selectedLocationId: state.selectedLocationId,
   currentRodId: state.currentRodId,
   currentLineId: state.currentLineId,
   currentBaitId: state.currentBaitId,
+  currentLandingNetId: state.currentLandingNetId,
   money: state.money,
   stats: {
     attempts: state.stats.attempts,
@@ -165,6 +181,8 @@ const buildSaveState = (state) => ({
   inventoryRods: state.inventoryRods,
   inventoryLines: state.inventoryLines,
   inventoryBait: state.inventoryBait,
+  inventoryGroundbait: state.inventoryGroundbait,
+  inventoryLandingNets: state.inventoryLandingNets,
   boostedLocationId: state.boostedLocationId,
   boostedCastsRemaining: state.boostedCastsRemaining,
 })
@@ -179,10 +197,12 @@ export default {
     getCurrentRodId: (state) => state.currentRodId,
     getCurrentLineId: (state) => state.currentLineId,
     getCurrentBaitId: (state) => state.currentBaitId,
+    getCurrentLandingNetId: (state) => state.currentLandingNetId,
     getEquippedGear: (state) => ({
       rodId: state.currentRodId,
       lineId: state.currentLineId,
       baitId: state.currentBaitId,
+      landingNetId: state.currentLandingNetId,
     }),
     getMoney: (state) => state.money,
     getCatchLog: (state) => state.catchLog,
@@ -190,6 +210,8 @@ export default {
     getInventoryRods: (state) => state.inventoryRods,
     getInventoryLines: (state) => state.inventoryLines,
     getInventoryBait: (state) => state.inventoryBait,
+    getInventoryGroundbait: (state) => state.inventoryGroundbait,
+    getInventoryLandingNets: (state) => state.inventoryLandingNets,
     getBoostedLocationId: (state) => state.boostedLocationId,
     getBoostedCastsRemaining: (state) => state.boostedCastsRemaining,
     getIsLocationBoosted: (state) => (locationId) =>
@@ -200,6 +222,10 @@ export default {
       ),
     getGearInventoryCount: (state) => (slot, id) =>
       getOwnedCount(state, slot, id),
+    getGroundbaitCount: (state) => (id) => getOwnedGroundbaitCount(state, id),
+    getLandingNetCount: (state) => (id) => getOwnedLandingNetCount(state, id),
+    getEquippedLandingNet: (state, getters, rootState, rootGetters) =>
+      getLandingNetDefinition(rootGetters, state.currentLandingNetId),
     getStats: (state) => state.stats,
     getCatchRate: (state) => {
       if (state.stats.attempts === 0) {
@@ -215,6 +241,8 @@ export default {
       state.currentRodId = payload.currentRodId ?? DEFAULT_ROD_ID
       state.currentLineId = payload.currentLineId ?? DEFAULT_LINE_ID
       state.currentBaitId = payload.currentBaitId ?? DEFAULT_BAIT_ID
+      state.currentLandingNetId =
+        payload.currentLandingNetId ?? DEFAULT_LANDING_NET_ID
       state.money = payload.money ?? 0
       state.catchLog = Array.isArray(payload.catchLog) ? payload.catchLog : []
       state.inventoryFish = Array.isArray(payload.inventoryFish)
@@ -231,6 +259,16 @@ export default {
       state.inventoryBait =
         payload.inventoryBait && typeof payload.inventoryBait === 'object'
           ? payload.inventoryBait
+          : {}
+      state.inventoryGroundbait =
+        payload.inventoryGroundbait &&
+        typeof payload.inventoryGroundbait === 'object'
+          ? payload.inventoryGroundbait
+          : {}
+      state.inventoryLandingNets =
+        payload.inventoryLandingNets &&
+        typeof payload.inventoryLandingNets === 'object'
+          ? payload.inventoryLandingNets
           : {}
       state.boostedLocationId = payload.boostedLocationId ?? null
       state.boostedCastsRemaining = payload.boostedCastsRemaining ?? 0
@@ -251,6 +289,9 @@ export default {
     },
     [MUTATIONS.SET_CURRENT_BAIT_ID]: (state, baitId) => {
       state.currentBaitId = baitId
+    },
+    [MUTATIONS.SET_CURRENT_LANDING_NET_ID]: (state, landingNetId) => {
+      state.currentLandingNetId = landingNetId
     },
     [MUTATIONS.SET_MONEY]: (state, money) => {
       state.money = Math.max(0, Number(money || 0))
@@ -297,6 +338,32 @@ export default {
       }
 
       state[inventoryKey] = nextInventory
+    },
+    [MUTATIONS.SET_GROUNDBAIT_INVENTORY_COUNT]: (state, payload) => {
+      const nextInventory = {
+        ...state.inventoryGroundbait,
+      }
+
+      if (payload.count > 0) {
+        nextInventory[payload.id] = payload.count
+      } else {
+        delete nextInventory[payload.id]
+      }
+
+      state.inventoryGroundbait = nextInventory
+    },
+    [MUTATIONS.SET_LANDING_NET_INVENTORY_COUNT]: (state, payload) => {
+      const nextInventory = {
+        ...state.inventoryLandingNets,
+      }
+
+      if (payload.count > 0) {
+        nextInventory[payload.id] = payload.count
+      } else {
+        delete nextInventory[payload.id]
+      }
+
+      state.inventoryLandingNets = nextInventory
     },
     [MUTATIONS.SET_BOOSTED_LOCATION_ID]: (state, locationId) => {
       state.boostedLocationId = locationId
@@ -511,6 +578,161 @@ export default {
           {
             type: 'success',
             message: `Bought ${gearDefinition.name} for ${price}.`,
+          },
+          { root: true },
+        ).then(() => true),
+      )
+    },
+    buyGroundbaitItem({ state, commit, dispatch, rootGetters }, groundbaitId) {
+      const definition = getGroundbaitDefinition(rootGetters, groundbaitId)
+      if (!definition) {
+        return Promise.resolve(false)
+      }
+
+      const price = Number(definition.price || 0)
+      if (state.money < price) {
+        return dispatch(
+          'ui/pushNotification',
+          {
+            type: 'error',
+            message: `Not enough money for ${definition.name}.`,
+          },
+          { root: true },
+        ).then(() => false)
+      }
+
+      const usesPerPurchase = Number(definition.usesPerPurchase || 0)
+      const ownedCount = getOwnedGroundbaitCount(state, definition.id)
+      commit(MUTATIONS.SPEND_MONEY, price)
+      commit(MUTATIONS.SET_GROUNDBAIT_INVENTORY_COUNT, {
+        id: definition.id,
+        count: ownedCount + usesPerPurchase,
+      })
+
+      return dispatch('persistProgress').then(() =>
+        dispatch(
+          'ui/pushNotification',
+          {
+            type: 'success',
+            message: `Bought ${definition.name} for ${price}. (+${usesPerPurchase} throws)`,
+          },
+          { root: true },
+        ).then(() => true),
+      )
+    },
+    buyLandingNetItem({ state, commit, dispatch, rootGetters }, landingNetId) {
+      const definition = getLandingNetDefinition(rootGetters, landingNetId)
+      if (!definition) {
+        return Promise.resolve(false)
+      }
+
+      const price = Number(definition.price || 0)
+      if (state.money < price) {
+        return dispatch(
+          'ui/pushNotification',
+          {
+            type: 'error',
+            message: `Not enough money for ${definition.name}.`,
+          },
+          { root: true },
+        ).then(() => false)
+      }
+
+      const ownedCount = getOwnedLandingNetCount(state, definition.id)
+      commit(MUTATIONS.SPEND_MONEY, price)
+      commit(MUTATIONS.SET_LANDING_NET_INVENTORY_COUNT, {
+        id: definition.id,
+        count: ownedCount + 1,
+      })
+
+      return dispatch('persistProgress').then(() =>
+        dispatch(
+          'ui/pushNotification',
+          {
+            type: 'success',
+            message: `Bought ${definition.name} for ${price}.`,
+          },
+          { root: true },
+        ).then(() => true),
+      )
+    },
+    consumeGroundbaitUse({ state, commit, dispatch }, groundbaitId) {
+      if (!groundbaitId) {
+        return Promise.resolve(false)
+      }
+
+      const ownedCount = getOwnedGroundbaitCount(state, groundbaitId)
+      if (ownedCount <= 0) {
+        return Promise.resolve(false)
+      }
+
+      commit(MUTATIONS.SET_GROUNDBAIT_INVENTORY_COUNT, {
+        id: groundbaitId,
+        count: ownedCount - 1,
+      })
+
+      return dispatch('persistProgress').then(() => true)
+    },
+    equipLandingNetItem(
+      { state, commit, dispatch, rootGetters },
+      landingNetId,
+    ) {
+      const definition = getLandingNetDefinition(rootGetters, landingNetId)
+      if (!definition) {
+        return Promise.resolve(false)
+      }
+
+      const ownedCount = getOwnedLandingNetCount(state, landingNetId)
+      if (ownedCount <= 0) {
+        return Promise.resolve(false)
+      }
+
+      commit(MUTATIONS.SET_CURRENT_LANDING_NET_ID, landingNetId)
+
+      return dispatch('persistProgress').then(() =>
+        dispatch(
+          'ui/pushNotification',
+          {
+            type: 'success',
+            message: `Equipped ${definition.name}.`,
+          },
+          { root: true },
+        ).then(() => true),
+      )
+    },
+    consumeEquippedLandingNetOnBreak({ state, commit, dispatch, rootGetters }) {
+      const landingNetId = state.currentLandingNetId
+      if (!landingNetId) {
+        return Promise.resolve(false)
+      }
+
+      const definition = getLandingNetDefinition(rootGetters, landingNetId)
+      if (!definition) {
+        return Promise.resolve(false)
+      }
+
+      const ownedCount = getOwnedLandingNetCount(state, landingNetId)
+      if (ownedCount <= 0) {
+        commit(MUTATIONS.SET_CURRENT_LANDING_NET_ID, null)
+        return dispatch('persistProgress').then(() => false)
+      }
+
+      const nextCount = Math.max(0, ownedCount - 1)
+      commit(MUTATIONS.SET_LANDING_NET_INVENTORY_COUNT, {
+        id: landingNetId,
+        count: nextCount,
+      })
+
+      if (nextCount <= 0) {
+        commit(MUTATIONS.SET_CURRENT_LANDING_NET_ID, null)
+      }
+
+      return dispatch('persistProgress').then(() =>
+        dispatch(
+          'ui/pushNotification',
+          {
+            type: 'warning',
+            message: `${definition.name} broke.`,
           },
           { root: true },
         ).then(() => true),

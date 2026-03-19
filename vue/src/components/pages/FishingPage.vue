@@ -15,7 +15,9 @@
       >
         <FishingScene
           :bobber="sceneBobber"
+          :groundbait-area="activeGroundbaitArea"
           :location="selectedLocation"
+          :show-landing-net-badge="showLandingNetBadge"
           @cast="(castAnchor) => onSceneCast(castAnchor)"
         />
       </div>
@@ -91,6 +93,10 @@
             <dt>Bait</dt>
             <dd>{{ equippedBaitName }}</dd>
           </div>
+          <div class="fishing-page__status-row">
+            <dt>Landing net</dt>
+            <dd>{{ equippedLandingNetName }}</dd>
+          </div>
         </dl>
         <section
           v-if="sceneWarnings.length"
@@ -105,6 +111,45 @@
         </section>
       </CollapsibleSidebar>
 
+      <CollapsibleSidebar
+        v-if="hasAnyGroundbaitAvailable"
+        class="fishing-page__hud-panel fishing-page__hud-panel--left fishing-page__groundbait-panel"
+        :collapsed="isGroundbaitPanelCollapsed"
+        direction="left"
+        mobile-mode="force-expanded"
+        :mobile-breakpoint="900"
+        :peek-size="48"
+        :collapsed-min-height="72"
+        @toggle="(nextCollapsed) => toggleGroundbaitPanel(nextCollapsed)"
+      >
+        <h2 class="fishing-page__panel-title">Groundbait</h2>
+        <p class="fishing-page__panel-copy">
+          Select mix and click water to deploy.
+        </p>
+        <div class="fishing-page__groundbait-list">
+          <button
+            v-for="groundbait in availableGroundbaitItems"
+            :key="groundbait.id"
+            class="fishing-page__groundbait-item"
+            :class="{
+              'fishing-page__groundbait-item--active':
+                groundbait.id === effectiveSelectedGroundbaitId,
+            }"
+            type="button"
+            @click="() => selectGroundbait(groundbait.id)"
+          >
+            <span>{{ groundbait.name }}</span>
+            <span>x{{ groundbait.count }}</span>
+          </button>
+        </div>
+        <BaseButton
+          :disabled="!canArmGroundbait"
+          @click="() => toggleGroundbaitArmed()"
+        >
+          {{ isGroundbaitArmed ? 'Cancel Groundbait' : 'Throw Groundbait' }}
+        </BaseButton>
+      </CollapsibleSidebar>
+
       <section class="fishing-page__hud-tray">
         <div class="fishing-page__tray-primary">
           <div class="fishing-page__cast-row">
@@ -117,7 +162,7 @@
             </span>
           </div>
           <p class="fishing-page__cast-hint">
-            Click anywhere on the water to cast.
+            {{ castHintText }}
           </p>
         </div>
 
@@ -243,7 +288,7 @@ import FishingScene from '@/components/fishing/FishingScene.vue'
 import InventoryStoreOverlay from '@/components/ui/InventoryStoreOverlay.vue'
 import LocationSelector from '@/components/fishing/LocationSelector.vue'
 import { defineConfig } from '@/utils/defineConfig'
-import { mapGetters } from 'vuex'
+import { mapActions, mapGetters } from 'vuex'
 
 const DEFAULT_PAGE_TITLE = 'Fishing Game'
 const HOOKED_BOBBER_Y = 92
@@ -269,9 +314,12 @@ export default {
       lastAppliedPhase: null,
       isLocationPanelCollapsed: false,
       isStatusPanelCollapsed: false,
+      isGroundbaitPanelCollapsed: false,
       isInventoryOverlayOpen: false,
       inventoryOverlayMode: 'inventory',
       inventoryOverlayTab: 'fish',
+      selectedGroundbaitId: null,
+      isGroundbaitArmed: false,
     }
   },
   computed: {
@@ -279,6 +327,9 @@ export default {
       locations: 'getLocations',
       configWarnings: 'getConfigWarnings',
       gearDefinitions: 'getGearDefinitions',
+      groundbaitDefinitions: 'getGroundbaitDefinitions',
+      landingNetDefinitions: 'getLandingNetDefinitions',
+      fishDefinitions: 'getFishDefinitions',
       getLocationWarnings: 'getLocationWarnings',
       getLocationById: 'getLocationById',
     }),
@@ -290,9 +341,13 @@ export default {
       inventoryRods: 'getInventoryRods',
       inventoryLines: 'getInventoryLines',
       inventoryBait: 'getInventoryBait',
+      inventoryGroundbait: 'getInventoryGroundbait',
+      inventoryLandingNets: 'getInventoryLandingNets',
       currentRodId: 'getCurrentRodId',
       currentLineId: 'getCurrentLineId',
       currentBaitId: 'getCurrentBaitId',
+      currentLandingNetId: 'getCurrentLandingNetId',
+      equippedLandingNet: 'getEquippedLandingNet',
       selectedLocationId: 'getSelectedLocationId',
     }),
     ...mapGetters('gameSession', {
@@ -305,6 +360,7 @@ export default {
       activeBarrier: 'getActiveBarrier',
       barrierRemainingClicks: 'getBarrierRemainingClicks',
       isBarrierBlocking: 'getIsBarrierBlocking',
+      getGroundbaitAreaByLocation: 'getGroundbaitAreaByLocation',
     }),
     ...mapGetters('ui', {
       resultPanel: 'getResultPanel',
@@ -314,6 +370,8 @@ export default {
         rods: this.buildInventoryGearRows('rods'),
         lines: this.buildInventoryGearRows('lines'),
         bait: this.buildInventoryGearRows('bait'),
+        landingNets: this.buildInventoryLandingNetRows(),
+        groundbait: this.buildInventoryGroundbaitRows(),
       }
     },
     storeGearItems() {
@@ -321,7 +379,53 @@ export default {
         rods: this.buildStoreGearRows('rods'),
         lines: this.buildStoreGearRows('lines'),
         bait: this.buildStoreGearRows('bait'),
+        landingNets: this.buildStoreLandingNetRows(),
+        groundbait: this.buildStoreGroundbaitRows(),
       }
+    },
+    availableGroundbaitItems() {
+      const definitions = this.groundbaitDefinitions || []
+      return definitions
+        .map((item) => ({
+          id: item.id,
+          name: item.name,
+          count: Number(this.inventoryGroundbait?.[item.id] || 0),
+        }))
+        .filter((item) => item.count > 0)
+    },
+    hasAnyGroundbaitAvailable() {
+      return this.availableGroundbaitItems.length > 0
+    },
+    effectiveSelectedGroundbaitId() {
+      const selectedExists = this.availableGroundbaitItems.some(
+        (item) => item.id === this.selectedGroundbaitId,
+      )
+      if (selectedExists) {
+        return this.selectedGroundbaitId
+      }
+
+      return this.availableGroundbaitItems[0]?.id || null
+    },
+    selectedGroundbait() {
+      if (!this.effectiveSelectedGroundbaitId) {
+        return null
+      }
+
+      return (
+        (this.groundbaitDefinitions || []).find(
+          (item) => item.id === this.effectiveSelectedGroundbaitId,
+        ) || null
+      )
+    },
+    canArmGroundbait() {
+      return this.canCast && Boolean(this.effectiveSelectedGroundbaitId)
+    },
+    activeGroundbaitArea() {
+      if (!this.selectedLocationId) {
+        return null
+      }
+
+      return this.getGroundbaitAreaByLocation(this.selectedLocationId)
     },
     selectedLocationWarnings() {
       const locationId =
@@ -356,8 +460,30 @@ export default {
     canCast() {
       return this.phase === 'idle' || this.phase === 'result'
     },
+    castHintText() {
+      if (this.isGroundbaitArmed && this.selectedGroundbait) {
+        return `Groundbait mode: click water to throw ${this.selectedGroundbait.name}.`
+      }
+
+      return 'Click anywhere on the water to cast.'
+    },
     canOpenInventoryOverlay() {
       return this.phase === 'idle' || this.phase === 'result'
+    },
+    canUseLandingNetNow() {
+      if (this.phase !== 'minigame') {
+        return false
+      }
+
+      if (!this.equippedLandingNet) {
+        return false
+      }
+
+      const greenProgress = Number(this.minigameState.greenProgress || 0)
+      return greenProgress >= 0.825
+    },
+    showLandingNetBadge() {
+      return this.canUseLandingNetNow
     },
     sceneBobber() {
       if (!this.selectedLocation) {
@@ -491,6 +617,9 @@ export default {
     equippedBaitName() {
       return this.resolveGearName('bait', this.currentBaitId)
     },
+    equippedLandingNetName() {
+      return this.equippedLandingNet?.name || 'none'
+    },
     minigameBarriers() {
       return this.minigameState.config?.barriers || []
     },
@@ -561,6 +690,26 @@ export default {
     })
   },
   methods: {
+    ...mapActions('progress', {
+      dispatchSellFishByInstanceId: 'sellFishByInstanceId',
+      dispatchSellAllFish: 'sellAllFish',
+      dispatchBuyLandingNetItem: 'buyLandingNetItem',
+      dispatchBuyGroundbaitItem: 'buyGroundbaitItem',
+      dispatchBuyGearItem: 'buyGearItem',
+      dispatchEquipLandingNetItem: 'equipLandingNetItem',
+      dispatchEquipGearItem: 'equipGearItem',
+      dispatchSelectLocation: 'selectLocation',
+    }),
+    ...mapActions('gameSession', {
+      dispatchStartCast: 'startCast',
+      dispatchThrowGroundbait: 'throwGroundbait',
+      dispatchAttemptLandingNetCatch: 'attemptLandingNetCatch',
+      dispatchSetReeling: 'setReeling',
+      dispatchRegisterBarrierClick: 'registerBarrierClick',
+    }),
+    ...mapActions('ui', {
+      dispatchHideResultPanel: 'hideResultPanel',
+    }),
     resolvePageTitle(phase) {
       return PHASE_PAGE_TITLES[phase] || DEFAULT_PAGE_TITLE
     },
@@ -579,6 +728,25 @@ export default {
       }
 
       this.isStatusPanelCollapsed = !this.isStatusPanelCollapsed
+    },
+    toggleGroundbaitPanel(nextCollapsed) {
+      if (typeof nextCollapsed === 'boolean') {
+        this.isGroundbaitPanelCollapsed = nextCollapsed
+        return
+      }
+
+      this.isGroundbaitPanelCollapsed = !this.isGroundbaitPanelCollapsed
+    },
+    selectGroundbait(groundbaitId) {
+      this.selectedGroundbaitId = groundbaitId
+    },
+    toggleGroundbaitArmed() {
+      if (!this.canArmGroundbait) {
+        this.isGroundbaitArmed = false
+        return
+      }
+
+      this.isGroundbaitArmed = !this.isGroundbaitArmed
     },
     openInventoryOverlay() {
       if (!this.canOpenInventoryOverlay) {
@@ -604,33 +772,52 @@ export default {
     },
     onInventorySellItem(item) {
       if (!item?.id) {
-        return
+        return Promise.resolve(false)
       }
 
-      this.$store.dispatch('progress/sellFishByInstanceId', item.id) // Promise-returning action; UI does not depend on completion
+      return this.dispatchSellFishByInstanceId(item.id)
     },
     onInventorySellAllFish() {
-      this.$store.dispatch('progress/sellAllFish') // Promise-returning action; UI updates from store reactivity
+      return this.dispatchSellAllFish()
     },
     onInventoryBuyItem(item) {
       if (!item?.id || !item?.slot) {
-        return
+        return Promise.resolve(false)
       }
 
-      this.$store.dispatch('progress/buyGearItem', {
+      const specialBuyHandlers = {
+        landingNets: () => this.dispatchBuyLandingNetItem(item.id),
+        groundbait: () => this.dispatchBuyGroundbaitItem(item.id),
+      }
+
+      const specialHandler = specialBuyHandlers[item.slot]
+      if (specialHandler) {
+        return specialHandler()
+      }
+
+      return this.dispatchBuyGearItem({
         slot: item.slot,
         itemId: item.id,
-      }) // Promise-returning action; UI updates from store reactivity
+      })
     },
     onInventoryEquipItem(item) {
       if (!item?.id || !item?.slot) {
-        return
+        return Promise.resolve(false)
       }
 
-      this.$store.dispatch('progress/equipGearItem', {
+      const specialEquipHandlers = {
+        landingNets: () => this.dispatchEquipLandingNetItem(item.id),
+      }
+
+      const specialHandler = specialEquipHandlers[item.slot]
+      if (specialHandler) {
+        return specialHandler()
+      }
+
+      return this.dispatchEquipGearItem({
         slot: item.slot,
         itemId: item.id,
-      }) // Promise-returning action; UI updates from store reactivity
+      })
     },
     resolveGearName(slot, gearId) {
       const items = this.gearDefinitions?.[slot]
@@ -640,6 +827,14 @@ export default {
 
       const found = items.find((item) => item.id === gearId)
       return found?.name || 'n/a'
+    },
+    resolveFishName(fishId) {
+      if (!Array.isArray(this.fishDefinitions)) {
+        return fishId
+      }
+
+      const fish = this.fishDefinitions.find((entry) => entry.id === fishId)
+      return fish?.name || fishId
     },
     getOwnedCount(slot, gearItem) {
       if (gearItem.isUnlimited) {
@@ -679,6 +874,14 @@ export default {
       }
 
       return rodImageById[itemId] || null
+    },
+    resolveLandingNetImageSrc(itemId) {
+      const landingNetImageById = {
+        'landing-net-small': '/images/nets/net-default.png',
+        'landing-net-big': '/images/nets/net-square.png',
+      }
+
+      return landingNetImageById[itemId] || null
     },
     buildInventoryGearRows(slot) {
       const items = this.gearDefinitions?.[slot]
@@ -722,23 +925,92 @@ export default {
           imageSrc: this.resolveGearImageSrc(slot, item.id),
         }))
     },
+    buildInventoryLandingNetRows() {
+      return (this.landingNetDefinitions || []).map((item) => {
+        const ownedCount = Number(this.inventoryLandingNets?.[item.id] || 0)
+        const isEquipped = item.id === this.currentLandingNetId
+        return {
+          id: item.id,
+          slot: 'landingNets',
+          name: item.name,
+          meta: `Capacity ${Number(item.capacityKg || 0).toFixed(2)} kg`,
+          ownedLabel: String(ownedCount),
+          isEquipped,
+          canEquip: ownedCount > 0,
+          price: Number(item.price || 0),
+          imageSrc: this.resolveLandingNetImageSrc(item.id),
+        }
+      })
+    },
+    buildStoreLandingNetRows() {
+      return (this.landingNetDefinitions || []).map((item) => ({
+        id: item.id,
+        slot: 'landingNets',
+        name: item.name,
+        meta: `Capacity ${Number(item.capacityKg || 0).toFixed(2)} kg`,
+        price: Number(item.price || 0),
+        canBuy: this.money >= Number(item.price || 0),
+        imageSrc: this.resolveLandingNetImageSrc(item.id),
+      }))
+    },
+    buildInventoryGroundbaitRows() {
+      return (this.groundbaitDefinitions || []).map((item) => {
+        const ownedCount = Number(this.inventoryGroundbait?.[item.id] || 0)
+        return {
+          id: item.id,
+          slot: 'groundbait',
+          name: item.name,
+          meta: `Targets ${this.resolveFishName(item.targetFishId)}`,
+          ownedLabel: String(ownedCount),
+          isEquipped: false,
+          canEquip: false,
+          price: Number(item.price || 0),
+          imageSrc: null,
+        }
+      })
+    },
+    buildStoreGroundbaitRows() {
+      return (this.groundbaitDefinitions || []).map((item) => ({
+        id: item.id,
+        slot: 'groundbait',
+        name: item.name,
+        meta: `Targets ${this.resolveFishName(item.targetFishId)}`,
+        price: Number(item.price || 0),
+        canBuy: this.money >= Number(item.price || 0),
+        imageSrc: null,
+      }))
+    },
     applyPageTitle(phase) {
       document.title = this.resolvePageTitle(phase)
     },
     selectLocation(locationId) {
-      this.$store.dispatch('progress/selectLocation', locationId) // Promise-returning action; no immediate UI dependency
+      this.dispatchSelectLocation(locationId)
     },
     startCast(castAnchor = null) {
-      this.$store.dispatch('gameSession/startCast', {
+      this.dispatchStartCast({
         castAnchor,
-      }) // synchronous action body; schedules timeout/RAF flow internally
+      })
     },
     onSceneCast(castAnchor) {
       if (!this.canCast) {
-        return
+        return Promise.resolve(false)
       }
 
-      this.startCast(castAnchor)
+      if (this.isGroundbaitArmed && this.effectiveSelectedGroundbaitId) {
+        return this.dispatchThrowGroundbait({
+          baitId: this.effectiveSelectedGroundbaitId,
+          castAnchor,
+        }).then((didThrow) => {
+          if (!didThrow) {
+            return false
+          }
+
+          this.isGroundbaitArmed = false
+          return true
+        })
+      }
+
+      return this.startCast(castAnchor).then(() => true)
     },
     isEditableTarget(target) {
       const element = target
@@ -755,6 +1027,16 @@ export default {
         return
       }
 
+      if (event.key?.toLowerCase() === 's') {
+        if (this.phase !== 'minigame' || event.repeat) {
+          return
+        }
+
+        event.preventDefault()
+        this.dispatchAttemptLandingNetCatch()
+        return
+      }
+
       if (event.code === 'Space') {
         if (this.phase !== 'minigame') {
           return
@@ -765,7 +1047,7 @@ export default {
           return
         }
 
-        this.$store.dispatch('gameSession/setReeling', true) // synchronous action body; immediate state toggle
+        this.dispatchSetReeling(true)
         return
       }
 
@@ -782,7 +1064,7 @@ export default {
       }
 
       event.preventDefault()
-      this.$store.dispatch('gameSession/registerBarrierClick') // synchronous action body; immediate click handling
+      this.dispatchRegisterBarrierClick()
     },
     onWindowKeyUp(event) {
       if (this.isEditableTarget(event.target)) {
@@ -798,7 +1080,7 @@ export default {
       }
 
       event.preventDefault()
-      this.$store.dispatch('gameSession/setReeling', false) // synchronous action body; immediate state toggle
+      this.dispatchSetReeling(false)
     },
     onReelingStart() {
       if (this.phase !== 'minigame') {
@@ -806,21 +1088,21 @@ export default {
       }
 
       if (this.isBarrierBlocking) {
-        this.$store.dispatch('gameSession/registerBarrierClick') // synchronous action body; immediate click handling
+        this.dispatchRegisterBarrierClick()
         return
       }
 
-      this.$store.dispatch('gameSession/setReeling', true) // synchronous action body; immediate state toggle
+      this.dispatchSetReeling(true)
     },
     onReelingStop() {
       if (this.phase !== 'minigame') {
         return
       }
 
-      this.$store.dispatch('gameSession/setReeling', false) // synchronous action body; immediate state toggle
+      this.dispatchSetReeling(false)
     },
     closeResultPanel() {
-      this.$store.dispatch('ui/hideResultPanel') // synchronous action body; immediate UI reset
+      this.dispatchHideResultPanel()
     },
   },
 }
@@ -938,6 +1220,12 @@ export default {
     }
   }
 
+  &__groundbait-panel {
+    bottom: 164px;
+    max-height: calc(100% - 340px);
+    top: auto;
+  }
+
   &__panel-title {
     font-size: 13px;
     letter-spacing: 0.08em;
@@ -997,6 +1285,31 @@ export default {
   &__warning-list {
     margin: 0;
     padding-left: 18px;
+  }
+
+  &__groundbait-list {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  &__groundbait-item {
+    align-items: center;
+    background: rgba(14, 28, 43, 0.66);
+    border: 1px solid tokens.$fishing-panel-border;
+    border-radius: 8px;
+    color: tokens.$fishing-panel-text;
+    cursor: pointer;
+    display: flex;
+    font-size: 13px;
+    justify-content: space-between;
+    padding: 8px 10px;
+    width: 100%;
+
+    &--active {
+      border-color: #d7b15a;
+      box-shadow: inset 0 0 0 1px #d7b15a;
+    }
   }
 
   &__hud-tray {
@@ -1210,6 +1523,10 @@ export default {
       top: auto;
       transform: none;
       width: 100%;
+    }
+
+    &__groundbait-panel {
+      bottom: auto;
     }
 
     &__inventory-launcher {

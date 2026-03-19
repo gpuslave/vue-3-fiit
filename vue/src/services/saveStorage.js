@@ -1,5 +1,5 @@
 const SAVE_KEY = 'fishing_game_save_v1'
-const SAVE_VERSION = 3
+const SAVE_VERSION = 5
 const DEFAULT_ROD_ID = 'spinning'
 const DEFAULT_LINE_ID = 'monofilament'
 const DEFAULT_BAIT_ID = 'worm'
@@ -10,6 +10,7 @@ const buildDefaultSaveState = () => ({
   currentRodId: DEFAULT_ROD_ID,
   currentLineId: DEFAULT_LINE_ID,
   currentBaitId: DEFAULT_BAIT_ID,
+  currentLandingNetId: null,
   money: 0,
   stats: {
     attempts: 0,
@@ -21,6 +22,8 @@ const buildDefaultSaveState = () => ({
   inventoryRods: {},
   inventoryLines: {},
   inventoryBait: {},
+  inventoryGroundbait: {},
+  inventoryLandingNets: {},
   boostedLocationId: null,
   boostedCastsRemaining: 0,
 })
@@ -97,7 +100,7 @@ const normalizeInventoryMap = (payload) => {
   }, {})
 }
 
-const normalizeSaveStateV3 = (payload) => {
+const normalizeSaveStateV4 = (payload) => {
   const selectedLocationId =
     typeof payload.selectedLocationId === 'string'
       ? payload.selectedLocationId
@@ -116,6 +119,10 @@ const normalizeSaveStateV3 = (payload) => {
     typeof payload.currentBaitId === 'string'
       ? payload.currentBaitId
       : DEFAULT_BAIT_ID
+  const currentLandingNetId =
+    typeof payload.currentLandingNetId === 'string'
+      ? payload.currentLandingNetId
+      : null
   const catchLog = Array.isArray(payload.catchLog)
     ? payload.catchLog.filter((item) => item && typeof item === 'object')
     : []
@@ -131,6 +138,7 @@ const normalizeSaveStateV3 = (payload) => {
     currentRodId,
     currentLineId,
     currentBaitId,
+    currentLandingNetId,
     money: toSafeNumber(payload.money),
     stats: {
       attempts: toSafeNumber(payload.stats?.attempts),
@@ -142,11 +150,32 @@ const normalizeSaveStateV3 = (payload) => {
     inventoryRods: normalizeInventoryMap(payload.inventoryRods),
     inventoryLines: normalizeInventoryMap(payload.inventoryLines),
     inventoryBait: normalizeInventoryMap(payload.inventoryBait),
+    inventoryGroundbait: normalizeInventoryMap(payload.inventoryGroundbait),
+    inventoryLandingNets: normalizeInventoryMap(payload.inventoryLandingNets),
     boostedLocationId:
       typeof payload.boostedLocationId === 'string'
         ? payload.boostedLocationId
         : null,
     boostedCastsRemaining: toSafeNumber(payload.boostedCastsRemaining),
+  }
+}
+
+const normalizeSaveStateV3 = (payload) => {
+  const v4State = normalizeSaveStateV4(payload)
+  return {
+    ...v4State,
+    inventoryGroundbait: {},
+    inventoryLandingNets: {},
+    currentLandingNetId: null,
+  }
+}
+
+const normalizeSaveStateV4AsV5 = (payload) => {
+  const v5State = normalizeSaveStateV4(payload)
+  return {
+    ...v5State,
+    inventoryLandingNets: {},
+    currentLandingNetId: null,
   }
 }
 
@@ -156,7 +185,15 @@ const normalizeSaveState = (payload) => {
   }
 
   if (payload.version === SAVE_VERSION) {
+    return normalizeSaveStateV4(payload)
+  }
+
+  if (payload.version === 3) {
     return normalizeSaveStateV3(payload)
+  }
+
+  if (payload.version === 4) {
+    return normalizeSaveStateV4AsV5(payload)
   }
 
   return null
